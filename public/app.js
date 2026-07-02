@@ -14,10 +14,12 @@ const el = (tag, cls, html) => {
 };
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-let state = { data: null, tab: "groups", timer: null };
+let state = { data: null, tab: "teams", filter: "all", timer: null };
 
 /* ---------- data ---------- */
 async function load(showLoading) {
+  // Preview mode: use an injected dataset instead of hitting the edge API.
+  if (window.__PREVIEW_DATA__) { state.data = window.__PREVIEW_DATA__; render(); return; }
   if (showLoading && !state.data) setEmpty("جارٍ تحميل بيانات البطولة…", false);
   try {
     const res = await fetch(API, { cache: "no-store" });
@@ -62,9 +64,62 @@ function render() {
     );
   }
 
+  renderTeams(d.groups || []);
   renderGroups(d.groups || []);
   renderBracket(d.knockout || [], d);
   applyTab();
+}
+
+/* ---------- teams grid (hero view) ---------- */
+function renderTeams(groups) {
+  const view = $("#view-teams");
+  view.innerHTML = "";
+  if (!groups.length) return;
+
+  // Flatten teams, tagging each with its group letter + qualifying rank.
+  const teams = [];
+  for (const g of groups) {
+    (g.table || []).forEach((t, idx) => teams.push({ ...t, group: g.name, rank: idx + 1 }));
+  }
+  if (!teams.length) return;
+
+  // Filter chips (All + each group letter).
+  const chips = el("div", "chips");
+  const mk = (val, label) => {
+    const b = el("button", "chip" + (state.filter === val ? " on" : ""), label);
+    b.addEventListener("click", () => { state.filter = val; renderTeams(groups); });
+    return b;
+  };
+  chips.appendChild(mk("all", "الكل"));
+  groups.forEach((g) => chips.appendChild(mk(g.name, "المجموعة " + g.name)));
+
+  const head = el("div", "section-title", "<h2>منتخبات البطولة</h2>");
+  view.appendChild(head);
+  view.appendChild(chips);
+
+  const grid = el("div", "teams-grid");
+  const shown = teams.filter((t) => state.filter === "all" || t.group === state.filter);
+  shown.forEach((t, i) => grid.appendChild(teamCard(t, i)));
+  view.appendChild(grid);
+}
+
+function teamCard(t, i) {
+  const qualifies = t.rank <= 2;
+  const card = el("div", "team-card" + (qualifies ? " q" : ""));
+  card.style.animationDelay = Math.min(i, 24) * 0.025 + "s";
+  card.innerHTML = `
+    <div class="tc-top">
+      <span class="tc-grp">${esc(t.group)}</span>
+      ${qualifies ? '<span class="tc-tag">متأهل</span>' : ""}
+    </div>
+    <div class="tc-flag">${t.flag}</div>
+    <div class="tc-name">${esc(t.ar)}</div>
+    <div class="tc-stats">
+      <span><b>${t.P}</b> لعب</span>
+      <span class="dotsep"></span>
+      <span><b class="pts">${t.Pts}</b> نقطة</span>
+    </div>`;
+  return card;
 }
 
 function renderLiveStrip(live) {
@@ -185,6 +240,7 @@ function champion(m) {
 
 /* ---------- tabs ---------- */
 function applyTab() {
+  $("#view-teams").hidden = state.tab !== "teams";
   $("#view-groups").hidden = state.tab !== "groups";
   $("#view-bracket").hidden = state.tab !== "bracket";
   document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("is-active", b.dataset.tab === state.tab));

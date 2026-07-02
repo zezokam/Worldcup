@@ -1,0 +1,23 @@
+name = "worldcup"
+main = "src/worker.js"
+compatibility_date = "2026-06-01"
+
+# Static front-end (index.html, styles.css, app.js) served straight from the edge.
+# The worker handles /api/* and falls back to these assets for every other path.
+assets = { directory = "./public", binding = "ASSETS" }
+
+# Warm the edge cache every 5 minutes so the first visitor after a match gets
+# fresh data instead of paying the upstream fetch latency.
+[triggers]
+crons = ["*/5 * * * *"]
+
+[observability]
+enabled = true
+
+# The custom domain is attached after the first deploy:
+#   npx wrangler deploy
+#   npx wrangler triggers ...           (crons deploy automatically)
+# Then map the hostname (see README) — either via the dashboard or:
+# [[routes]]
+# pattern = "worldcup.alkamali.uk"
+# custom_domain = true

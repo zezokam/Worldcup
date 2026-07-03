@@ -14,7 +14,7 @@ const el = (tag, cls, html) => {
 };
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-let state = { data: null, tab: "teams", filter: "all", timer: null };
+let state = { data: null, tab: "map", filter: "all", timer: null };
 
 /* ---------- data ---------- */
 async function load(showLoading) {
@@ -64,10 +64,198 @@ function render() {
     );
   }
 
+  renderMap(d.knockout || [], d.groups || []);
   renderTeams(d.groups || []);
   renderGroups(d.groups || []);
-  renderBracket(d.knockout || [], d);
   applyTab();
+}
+
+/* ---------- bracket MAP (hero) — mirrored tree, flags left & right, trophy center ---------- */
+function renderMap(rounds, groups) {
+  const view = $("#view-map");
+  view.innerHTML = "";
+  view.appendChild(el("div", "section-title", "<h2>خريطة البطولة</h2>"));
+
+  // Knockout rounds excluding the third-place playoff and the final (final sits in the center).
+  const tree = rounds.filter((r) => r.stage !== "third" && r.stage !== "final");
+  const final = rounds.find((r) => r.stage === "final");
+
+  if (!tree.length && !final) {
+    // Knockout not started: seed a preview map from qualified teams (top 2 of each group).
+    const seeded = seedFromGroups(groups);
+    if (!seeded) {
+      view.appendChild(el("div", "empty-row", "ستظهر خريطة الأدوار الإقصائية هنا فور انطلاقها."));
+      return;
+    }
+    view.appendChild(seeded);
+    view.appendChild(el("p", "map-note", "خريطة مبدئية بالمنتخبات المتأهلة — تُحدَّث تلقائيًا عند بدء الأدوار الإقصائية."));
+    return;
+  }
+
+  const bmap = mapBracket(tree, final);
+  view.appendChild(bmap);
+  view.appendChild(el("p", "map-note", "اسحب لأعلى/أسفل لتصفّح الخريطة كاملة — تُحدَّث النتائج تلقائيًا بعد كل مباراة."));
+  // Draw connector lines after layout settles.
+  requestAnimationFrame(() => drawConnectors(bmap));
+}
+
+const SVGNS = "http://www.w3.org/2000/svg";
+
+// Draw the bracket's connector lines as a measured SVG overlay so they stay
+// correct at any width / team count. Pairs match j in a column with match
+// floor(j/2) in the next inner column, plus the two semi-finals into the final.
+function drawConnectors(bmap) {
+  if (!bmap || !bmap.isConnected) return;
+  const w = bmap.clientWidth, h = bmap.clientHeight;
+  if (!w || !h) return;
+  const base = bmap.getBoundingClientRect();
+  bmap.querySelectorAll("svg.bm-lines").forEach((s) => s.remove());
+  const svg = document.createElementNS(SVGNS, "svg");
+  svg.setAttribute("class", "bm-lines");
+  svg.setAttribute("width", w);
+  svg.setAttribute("height", h);
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+
+  const edge = (elm, side) => {
+    const r = elm.getBoundingClientRect();
+    return { x: (side === "right" ? r.right : r.left) - base.left, y: r.top + r.height / 2 - base.top };
+  };
+  const elbow = (a, b) => {
+    const midX = (a.x + b.x) / 2;
+    const d = `M ${a.x} ${a.y} H ${midX} V ${b.y} H ${b.x}`;
+    const path = document.createElementNS(SVGNS, "path");
+    path.setAttribute("d", d);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", "rgba(255,255,255,0.18)");
+    path.setAttribute("stroke-width", "2");
+    path.setAttribute("stroke-linecap", "round");
+    path.setAttribute("stroke-linejoin", "round");
+    svg.appendChild(path);
+  };
+  const matches = (col) => [...col.querySelectorAll(".bm-match:not(.placeholder)")];
+
+  bmap.querySelectorAll(".half").forEach((half) => {
+    const outward = half.classList.contains("left"); // left: inner side = right edge
+    const inSide = outward ? "right" : "left";
+    const outSide = outward ? "left" : "right";
+    const cols = [...half.querySelectorAll(".bm-round")].sort(
+      (a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left
+    );
+    // Visual order: outer → inner is toward the center.
+    const ordered = outward ? cols : cols.slice().reverse();
+    for (let i = 0; i < ordered.length - 1; i++) {
+      const A = matches(ordered[i]), B = matches(ordered[i + 1]);
+      A.forEach((am, j) => {
+        const bm = B[Math.floor(j / 2)];
+        if (!bm) return;
+        elbow(edge(am, inSide), edge(bm, outSide));
+      });
+    }
+    // Innermost column into the final (center).
+    const finalMatch = bmap.querySelector(".bm-center .bm-match");
+    const inner = ordered[ordered.length - 1] && matches(ordered[ordered.length - 1]);
+    if (finalMatch && inner && inner.length) {
+      elbow(edge(inner[0], inSide), edge(finalMatch, outward ? "left" : "right"));
+    }
+  });
+
+  bmap.insertBefore(svg, bmap.firstChild);
+}
+
+// Build the mirrored bracket. `tree` = rounds outer→inner (excluding final); `final` = final round.
+function mapBracket(tree, final) {
+  const wrap = el("div", "bmap");
+
+  const leftHalf = el("div", "half left");
+  const rightHalf = el("div", "half right");
+
+  tree.forEach((r) => {
+    const ms = r.matches || [];
+    const half = Math.ceil(ms.length / 2);
+    leftHalf.appendChild(roundCol(ms.slice(0, half), r.ar));
+    rightHalf.appendChild(roundCol(ms.slice(half), r.ar));
+  });
+
+  // Center column: final match + trophy + champion.
+  const center = el("div", "bm-center");
+  const fm = final && final.matches && final.matches[0];
+  const champ = fm && champion(fm);
+  center.appendChild(el("div", "bm-final-label", "النهائي"));
+  center.appendChild(el("div", "bm-trophy" + (champ ? " won" : ""), "🏆"));
+  if (fm) {
+    const fc = matchNode(fm, true);
+    center.appendChild(fc);
+  }
+  center.appendChild(el("div", "bm-champ", champ ? `<span class="f">${champ.flag}</span><span>${esc(champ.ar)}</span>` : `<span class="tbd">البطل</span>`));
+
+  wrap.appendChild(leftHalf);
+  wrap.appendChild(center);
+  wrap.appendChild(rightHalf);
+  return wrap;
+}
+
+function roundCol(matches, roundAr) {
+  const col = el("div", "bm-round");
+  col.setAttribute("data-round", roundAr || "");
+  if (!matches.length) {
+    col.appendChild(el("div", "bm-match placeholder", ""));
+    return col;
+  }
+  matches.forEach((m) => col.appendChild(matchNode(m, false)));
+  return col;
+}
+
+function matchNode(m, isFinal) {
+  const node = el("div", "bm-match" + (isFinal ? " final" : "") + (m.state === "live" ? " live" : ""));
+  node.appendChild(teamSlot(m, "home"));
+  node.appendChild(teamSlot(m, "away"));
+  if (m.state === "live") node.appendChild(el("span", "bm-live", "●"));
+  return node;
+}
+
+function teamSlot(m, side) {
+  const t = m[side];
+  const s = side === "home" ? m.hs : m.as;
+  const o = side === "home" ? m.as : m.hs;
+  const decided = m.state === "finished" && s !== null && o !== null;
+  const cls = decided ? (s > o ? " win" : s < o ? " lose" : "") : "";
+  const slot = el("div", "bm-slot" + cls);
+  slot.innerHTML = `<span class="f">${t.flag}</span><span class="s">${s === null ? "" : s}</span>`;
+  slot.title = t.ar;
+  return slot;
+}
+
+// When knockout hasn't started, render a static map of qualified teams (top 2 per group).
+function seedFromGroups(groups) {
+  const qualified = [];
+  for (const g of groups) (g.table || []).slice(0, 2).forEach((t) => qualified.push(t));
+  if (qualified.length < 4) return null;
+
+  const wrap = el("div", "bmap seeded");
+  const half = Math.ceil(qualified.length / 2);
+  const mk = (list) => {
+    const col = el("div", "bm-round");
+    list.forEach((t) => {
+      const node = el("div", "bm-match");
+      const slot = el("div", "bm-slot");
+      slot.innerHTML = `<span class="f">${t.flag}</span>`;
+      slot.title = t.ar;
+      node.appendChild(slot);
+      col.appendChild(node);
+    });
+    return col;
+  };
+  const left = el("div", "half left");
+  left.appendChild(mk(qualified.slice(0, half)));
+  const right = el("div", "half right");
+  right.appendChild(mk(qualified.slice(half)));
+  const center = el("div", "bm-center");
+  center.appendChild(el("div", "bm-trophy", "🏆"));
+  center.appendChild(el("div", "bm-champ", `<span class="tbd">البطل</span>`));
+  wrap.appendChild(left);
+  wrap.appendChild(center);
+  wrap.appendChild(right);
+  return wrap;
 }
 
 /* ---------- teams grid (hero view) ---------- */
@@ -177,64 +365,6 @@ function groupCard(g, i) {
   return card;
 }
 
-function renderBracket(rounds, d) {
-  const view = $("#view-bracket");
-  view.innerHTML = "";
-  if (!rounds.length) {
-    view.appendChild(el("div", "section-title", "<h2>خط سير البطولة</h2>"));
-    view.appendChild(el("div", "empty-row", "لم تبدأ الأدوار الإقصائية بعد — ستظهر شجرة المباريات هنا تلقائيًا."));
-    return;
-  }
-  view.appendChild(el("div", "section-title", "<h2>خط سير البطولة</h2>"));
-
-  const ko = el("div", "ko");
-
-  // Champion banner when the final is decided.
-  const final = rounds.find((r) => r.stage === "final");
-  const champ = final && champion(final.matches[0]);
-  if (champ) {
-    ko.appendChild(el("div", "champ-banner",
-      `<span class="cb-cup">🏆</span><span class="cb-txt">بطل العالم</span>
-       <span class="cb-team"><span class="f">${champ.flag}</span>${esc(champ.ar)}</span>`));
-  }
-
-  rounds.forEach((r) => ko.appendChild(koRound(r)));
-  view.appendChild(ko);
-}
-
-function koRound(r) {
-  const isFinal = r.stage === "final";
-  const round = el("div", "ko-round" + (isFinal ? " final" : ""));
-  round.appendChild(el("div", "ko-round-head",
-    `<span class="line"></span><h3>${isFinal ? "🏆 " : ""}${esc(r.ar)}</h3><span class="line"></span>`));
-  const wrap = el("div", "ko-matches");
-  (r.matches || []).forEach((m) => wrap.appendChild(matchCard(m, r.stage)));
-  round.appendChild(wrap);
-  return round;
-}
-
-function matchCard(m, stage) {
-  const card = el("div", "match" + (m.state === "live" ? " is-live" : "") + (stage === "final" ? " is-final" : ""));
-  const meta =
-    m.state === "live"
-      ? `<span class="live">● ${esc(m.minute || "مباشر")}</span>`
-      : m.state === "finished"
-      ? "انتهت"
-      : dateAr(m.kickoff);
-  card.innerHTML = `<div class="m-meta">${meta}</div>${teamLine(m, "home")}${teamLine(m, "away")}`;
-  return card;
-}
-
-function teamLine(m, side) {
-  const t = m[side];
-  const s = side === "home" ? m.hs : m.as;
-  const o = side === "home" ? m.as : m.hs;
-  const decided = m.state === "finished" && s !== null && o !== null;
-  const cls = decided ? (s > o ? " win" : s < o ? " lose" : "") : "";
-  const score = s === null ? "" : s;
-  return `<div class="m-team${cls}"><span class="nm"><span class="f">${t.flag}</span><span class="t">${esc(t.ar)}</span></span><span class="sc">${score}</span></div>`;
-}
-
 function champion(m) {
   if (!m || m.state !== "finished" || m.hs === null || m.as === null) return null;
   if (m.hs > m.as) return m.home;
@@ -244,9 +374,9 @@ function champion(m) {
 
 /* ---------- tabs ---------- */
 function applyTab() {
+  $("#view-map").hidden = state.tab !== "map";
   $("#view-teams").hidden = state.tab !== "teams";
   $("#view-groups").hidden = state.tab !== "groups";
-  $("#view-bracket").hidden = state.tab !== "bracket";
   document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("is-active", b.dataset.tab === state.tab));
 }
 document.querySelectorAll(".tab").forEach((b) =>
@@ -278,3 +408,13 @@ function dateAr(iso) {
 load(true);
 state.timer = setInterval(() => load(false), REFRESH_MS);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) load(false); });
+
+// Redraw the bracket connectors on resize / orientation change.
+let rzTimer;
+window.addEventListener("resize", () => {
+  clearTimeout(rzTimer);
+  rzTimer = setTimeout(() => {
+    const bmap = document.querySelector("#view-map .bmap");
+    if (bmap) drawConnectors(bmap);
+  }, 150);
+});

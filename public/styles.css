@@ -201,47 +201,67 @@ main.wrap { position: relative; z-index: 1; }
 
 .empty-row { text-align: center; color: var(--ink-mute); font-size: 12.5px; padding: 16px; }
 
-/* ===== Knockout (mobile-first, fully visible — no sideways scroll) ===== */
-.ko { display: flex; flex-direction: column; gap: 24px; }
-.champ-banner {
-  display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap;
-  padding: 14px 16px; border-radius: 16px; text-align: center;
-  background: linear-gradient(180deg, rgba(244,192,69,.18), rgba(244,192,69,.05));
-  border: 1px solid rgba(244,192,69,.45); box-shadow: var(--shadow);
+/* ===== Bracket MAP — mirrored tree, flags left & right, trophy center ===== */
+/* Fits the phone width (no sideways scroll); scrolls vertically for the full map. */
+.map-note { margin: 14px 4px 0; text-align: center; font-size: 11.5px; color: var(--ink-mute); }
+
+.bmap {
+  display: flex; align-items: stretch; justify-content: center;
+  gap: 0; width: 100%; padding: 8px 0 6px;
+  --line-c: rgba(255,255,255,0.16);
+  --stub: 9px;      /* horizontal connector length */
 }
-.champ-banner .cb-cup { font-size: 26px; filter: drop-shadow(0 4px 10px rgba(244,192,69,.5)); }
-.champ-banner .cb-txt { font-size: 13px; font-weight: 700; color: var(--ink-dim); }
-.champ-banner .cb-team { display: inline-flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 900; color: var(--gold-2); }
-.champ-banner .cb-team .f { font-size: 24px; }
+.bmap .half { display: flex; flex: 1 1 0; min-width: 0; }
+.bmap .half.right { flex-direction: row-reverse; }
 
-.ko-round { display: flex; flex-direction: column; gap: 12px; }
-.ko-round-head { display: flex; align-items: center; gap: 12px; }
-.ko-round-head .line { flex: 1; height: 1px; background: linear-gradient(90deg, transparent, var(--line), transparent); }
-.ko-round-head h3 { margin: 0; font-size: 14px; font-weight: 800; color: var(--gold-2); white-space: nowrap; letter-spacing: .3px; }
-
-.ko-matches { display: grid; grid-template-columns: 1fr; gap: 12px; }
-@media (min-width: 520px) { .ko-matches { grid-template-columns: 1fr 1fr; } }
-@media (min-width: 860px) { .ko-matches { grid-template-columns: repeat(4, 1fr); } }
-.ko-round.final .ko-matches { grid-template-columns: 1fr; max-width: 360px; margin: 0 auto; width: 100%; }
-
-.match {
-  background: var(--card); border: 1px solid var(--line); border-radius: 13px;
-  padding: 8px 10px; box-shadow: var(--shadow); position: relative;
+.bm-round {
+  display: flex; flex-direction: column; justify-content: space-around;
+  flex: 1 1 0; min-width: 0; gap: 6px;
 }
-.match.is-live { border-color: rgba(255,77,94,.45); }
-.match.is-final { border-color: rgba(244,192,69,.5); background: linear-gradient(180deg, rgba(244,192,69,.10), var(--card)); }
-.match .m-meta { font-size: 10px; color: var(--ink-mute); text-align: center; margin-bottom: 4px; }
-.match .m-meta .live { color: var(--live); font-weight: 800; }
-.m-team { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 2px; }
-.m-team + .m-team { border-top: 1px solid rgba(255,255,255,.06); }
-.m-team .nm { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.m-team .nm .f { font-size: 19px; }
-.m-team .nm .t { font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
-.m-team .sc { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--ink); min-width: 16px; text-align: center; }
-.m-team.win .t { color: var(--gold-2); }
-.m-team.win .sc { color: var(--gold-2); }
-.m-team.lose { opacity: .55; }
-.match.is-final { margin: 0 auto; width: 100%; }
+
+/* --- match node: two stacked flag+score slots --- */
+.bm-match {
+  position: relative; align-self: center; flex: 0 0 auto;
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 9px; padding: 3px; margin: 3px 0;
+  width: calc(100% - 4px); max-width: 60px; box-shadow: 0 6px 14px -10px rgba(0,0,0,.8);
+}
+.bm-match.live { border-color: rgba(255,77,94,.5); }
+.bm-match.placeholder { opacity: 0; border: 0; background: transparent; box-shadow: none; }
+.bm-live { position: absolute; top: -5px; inset-inline-start: -5px; color: var(--live); font-size: 9px; animation: pulse 1.4s infinite; }
+
+.bm-slot { display: flex; align-items: center; justify-content: space-between; gap: 3px; border-radius: 5px; padding: 1px 3px; }
+.bm-slot .f { font-size: 17px; line-height: 1.15; }
+.bm-slot .s { font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--ink-dim); min-width: 8px; text-align: center; }
+.bm-slot.win { background: rgba(23,201,100,.14); }
+.bm-slot.win .s { color: var(--green); }
+.bm-slot.lose { opacity: .42; }
+
+/* Connector lines are drawn as a measured SVG overlay (see drawConnectors in app.js). */
+.bmap { position: relative; }
+.bm-lines { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+.bmap .half, .bm-center { position: relative; z-index: 1; }
+
+/* --- center column: final + trophy + champion --- */
+.bm-center { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; flex: 0 0 auto; padding: 0 2px; }
+.bm-final-label { font-size: 10px; font-weight: 800; color: var(--gold-2); letter-spacing: .3px; }
+.bm-trophy { font-size: 34px; line-height: 1; filter: drop-shadow(0 6px 14px rgba(244,192,69,.5)); }
+.bm-trophy.won { animation: bob 2.4s ease-in-out infinite; }
+.bm-center .bm-match { max-width: 66px; border-color: rgba(244,192,69,.5); background: linear-gradient(180deg, rgba(244,192,69,.12), var(--card)); }
+.bm-champ { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 11px; font-weight: 800; color: var(--gold-2); text-align: center; }
+.bm-champ .f { font-size: 22px; }
+.bm-champ .tbd { color: var(--ink-mute); font-weight: 700; }
+
+@media (min-width: 600px) {
+  .bmap { --stub: 14px; }
+  .bm-match { max-width: 96px; padding: 5px; }
+  .bm-slot .f { font-size: 24px; }
+  .bm-slot .s { font-size: 13px; }
+  .bm-trophy { font-size: 46px; }
+  .bm-center .bm-match { max-width: 108px; }
+  .bm-champ { font-size: 13px; }
+}
 
 /* ===== Empty / loading ===== */
 .empty { text-align: center; padding: 48px 16px; color: var(--ink-dim); }

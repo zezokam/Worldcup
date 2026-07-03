@@ -1,9 +1,10 @@
 /* World Cup 2026 front-end. Fetches normalized data from the edge worker,
-   renders group tables + knockout bracket, and auto-refreshes so the page
-   always reflects the latest state after each match. */
+   renders group tables + knockout rounds + today's matches, and auto-refreshes
+   (faster while a match is live) so the page always reflects the latest state. */
 
 const API = "/api/bracket";
 const REFRESH_MS = 60000;
+const REFRESH_LIVE_MS = 30000;
 
 const $ = (s, r = document) => r.querySelector(s);
 const el = (tag, cls, html) => {
@@ -14,7 +15,7 @@ const el = (tag, cls, html) => {
 };
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-let state = { data: null, tab: "map", filter: "all", timer: null };
+let state = { data: null, tab: "map", filter: "all", round: null, timer: null };
 
 /* ---------- data ---------- */
 async function load(showLoading) {
@@ -30,6 +31,14 @@ async function load(showLoading) {
   } catch (err) {
     if (!state.data) setEmpty("تعذّر تحميل البيانات. تحقّق من الاتصال وحاول مجددًا.", true);
   }
+  scheduleRefresh();
+}
+
+// Poll faster while a match is live so the score/minute stay close to real time.
+function scheduleRefresh() {
+  clearTimeout(state.timer);
+  const hasLive = !!(state.data && state.data.live && state.data.live.length);
+  state.timer = setTimeout(() => load(false), hasLive ? REFRESH_LIVE_MS : REFRESH_MS);
 }
 
 /* ---------- render ---------- */
@@ -65,26 +74,27 @@ function render() {
   }
 
   renderMap(d.knockout || [], d.groups || []);
+  renderToday(d);
   renderTeams(d.groups || []);
   renderGroups(d.groups || []);
   applyTab();
 }
 
-/* ---------- bracket MAP (hero) — mirrored tree, flags left & right, trophy center ---------- */
+/* ---------- knockout ladder (hero) — one round at a time, clear pairings ----------
+   The upstream API has no "winner of match X feeds slot Y" linkage, so a drawn
+   tree can't be wired correctly. Instead each round is a list of explicit
+   matchup cards (who plays whom, score, winner) with chips to move between rounds. */
 function renderMap(rounds, groups) {
   const view = $("#view-map");
   view.innerHTML = "";
-  view.appendChild(el("div", "section-title", "<h2>خريطة البطولة</h2>"));
+  view.appendChild(el("div", "section-title", "<h2>مسار البطولة — الأدوار الإقصائية</h2>"));
 
-  // Knockout rounds excluding the third-place playoff and the final (final sits in the center).
-  const tree = rounds.filter((r) => r.stage !== "third" && r.stage !== "final");
-  const final = rounds.find((r) => r.stage === "final");
-
-  if (!tree.length && !final) {
-    // Knockout not started: seed a preview map from qualified teams (top 2 of each group).
+  const valid = rounds.filter((r) => (r.matches || []).length);
+  if (!valid.length) {
+    // Knockout not started: seed a preview from qualified teams (top 2 of each group).
     const seeded = seedFromGroups(groups);
     if (!seeded) {
-      view.appendChild(el("div", "empty-row", "ستظهر خريطة الأدوار الإقصائية هنا فور انطلاقها."));
+      view.appendChild(el("div", "empty-row", "ستظهر مواجهات الأدوار الإقصائية هنا فور انطلاقها."));
       return;
     }
     view.appendChild(seeded);
@@ -92,137 +102,136 @@ function renderMap(rounds, groups) {
     return;
   }
 
-  const bmap = mapBracket(tree, final);
-  view.appendChild(bmap);
-  view.appendChild(el("p", "map-note", "اسحب لأعلى/أسفل لتصفّح الخريطة كاملة — تُحدَّث النتائج تلقائيًا بعد كل مباراة."));
-  // Draw connector lines after layout settles.
-  requestAnimationFrame(() => drawConnectors(bmap));
-}
+  const active = activeRound(valid);
 
-const SVGNS = "http://www.w3.org/2000/svg";
-
-// Draw the bracket's connector lines as a measured SVG overlay so they stay
-// correct at any width / team count. Pairs match j in a column with match
-// floor(j/2) in the next inner column, plus the two semi-finals into the final.
-function drawConnectors(bmap) {
-  if (!bmap || !bmap.isConnected) return;
-  const w = bmap.clientWidth, h = bmap.clientHeight;
-  if (!w || !h) return;
-  const base = bmap.getBoundingClientRect();
-  bmap.querySelectorAll("svg.bm-lines").forEach((s) => s.remove());
-  const svg = document.createElementNS(SVGNS, "svg");
-  svg.setAttribute("class", "bm-lines");
-  svg.setAttribute("width", w);
-  svg.setAttribute("height", h);
-  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
-
-  const edge = (elm, side) => {
-    const r = elm.getBoundingClientRect();
-    return { x: (side === "right" ? r.right : r.left) - base.left, y: r.top + r.height / 2 - base.top };
-  };
-  const elbow = (a, b) => {
-    const midX = (a.x + b.x) / 2;
-    const d = `M ${a.x} ${a.y} H ${midX} V ${b.y} H ${b.x}`;
-    const path = document.createElementNS(SVGNS, "path");
-    path.setAttribute("d", d);
-    path.setAttribute("fill", "none");
-    path.setAttribute("stroke", "rgba(255,255,255,0.18)");
-    path.setAttribute("stroke-width", "2");
-    path.setAttribute("stroke-linecap", "round");
-    path.setAttribute("stroke-linejoin", "round");
-    svg.appendChild(path);
-  };
-  const matches = (col) => [...col.querySelectorAll(".bm-match:not(.placeholder)")];
-
-  bmap.querySelectorAll(".half").forEach((half) => {
-    const outward = half.classList.contains("left"); // left: inner side = right edge
-    const inSide = outward ? "right" : "left";
-    const outSide = outward ? "left" : "right";
-    const cols = [...half.querySelectorAll(".bm-round")].sort(
-      (a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left
+  // Round chips (دور الـ32 → النهائي) — the current round is picked automatically.
+  const chips = el("div", "chips rounds-nav");
+  valid.forEach((r) => {
+    const done = r.matches.filter((m) => m.state === "finished").length;
+    const b = el(
+      "button",
+      "chip" + (r.stage === active.stage ? " on" : ""),
+      `${esc(r.ar)} <span class="cnt">${done}/${r.matches.length}</span>`
     );
-    // Visual order: outer → inner is toward the center.
-    const ordered = outward ? cols : cols.slice().reverse();
-    for (let i = 0; i < ordered.length - 1; i++) {
-      const A = matches(ordered[i]), B = matches(ordered[i + 1]);
-      A.forEach((am, j) => {
-        const bm = B[Math.floor(j / 2)];
-        if (!bm) return;
-        elbow(edge(am, inSide), edge(bm, outSide));
-      });
-    }
-    // Innermost column into the final (center).
-    const finalMatch = bmap.querySelector(".bm-center .bm-match");
-    const inner = ordered[ordered.length - 1] && matches(ordered[ordered.length - 1]);
-    if (finalMatch && inner && inner.length) {
-      elbow(edge(inner[0], inSide), edge(finalMatch, outward ? "left" : "right"));
-    }
+    b.addEventListener("click", () => { state.round = r.stage; renderMap(rounds, groups); });
+    chips.appendChild(b);
   });
+  view.appendChild(chips);
 
-  bmap.insertBefore(svg, bmap.firstChild);
+  const list = el("div", "ko-list");
+  active.matches.slice().sort(byKickoff).forEach((m, i) => list.appendChild(matchCard(m, i, {})));
+  view.appendChild(list);
+  view.appendChild(el("p", "map-note", "كل بطاقة = مواجهة مباشرة بين منتخبين — الفائز ينتقل للدور التالي. تنقّل بين الأدوار من الأزرار أعلاه."));
 }
 
-// Build the mirrored bracket. `tree` = rounds outer→inner (excluding final); `final` = final round.
-function mapBracket(tree, final) {
-  const wrap = el("div", "bmap");
-
-  const leftHalf = el("div", "half left");
-  const rightHalf = el("div", "half right");
-
-  tree.forEach((r) => {
-    const ms = r.matches || [];
-    const half = Math.ceil(ms.length / 2);
-    leftHalf.appendChild(roundCol(ms.slice(0, half), r.ar));
-    rightHalf.appendChild(roundCol(ms.slice(half), r.ar));
-  });
-
-  // Center column: final match + trophy + champion.
-  const center = el("div", "bm-center");
-  const fm = final && final.matches && final.matches[0];
-  const champ = fm && champion(fm);
-  center.appendChild(el("div", "bm-final-label", "النهائي"));
-  center.appendChild(el("div", "bm-trophy" + (champ ? " won" : ""), "🏆"));
-  if (fm) {
-    const fc = matchNode(fm, true);
-    center.appendChild(fc);
+// Which round to show by default: the one with a live match, else the first
+// round that still has unplayed matches, else the last round (tournament over).
+function activeRound(rounds) {
+  if (state.round) {
+    const chosen = rounds.find((r) => r.stage === state.round);
+    if (chosen) return chosen;
   }
-  center.appendChild(el("div", "bm-champ", champ ? `<span class="f">${champ.flag}</span><span>${esc(champ.ar)}</span>` : `<span class="tbd">البطل</span>`));
-
-  wrap.appendChild(leftHalf);
-  wrap.appendChild(center);
-  wrap.appendChild(rightHalf);
-  return wrap;
+  const live = rounds.find((r) => r.matches.some((m) => m.state === "live"));
+  if (live) return live;
+  const upcoming = rounds.find((r) => r.matches.some((m) => m.state !== "finished"));
+  if (upcoming) return upcoming;
+  return rounds[rounds.length - 1];
 }
 
-function roundCol(matches, roundAr) {
-  const col = el("div", "bm-round");
-  col.setAttribute("data-round", roundAr || "");
-  if (!matches.length) {
-    col.appendChild(el("div", "bm-match placeholder", ""));
-    return col;
-  }
-  matches.forEach((m) => col.appendChild(matchNode(m, false)));
-  return col;
+/* ---------- match card (shared by the ladder + today's matches) ---------- */
+function matchCard(m, i, opts = {}) {
+  const card = el("div", "ko-card" + (m.state === "live" ? " live" : ""));
+  card.style.animationDelay = Math.min(i, 14) * 0.03 + "s";
+
+  const when = opts.timeOnly
+    ? `<b class="tm">${m.kickoff ? esc(timeAr(Date.parse(m.kickoff))) : "—"}</b>`
+    : `<span class="when">${esc(dateAr(m.kickoff))}</span>`;
+  const stg = opts.stage && m.stageAr ? `<span class="stg">${esc(m.stageAr)}</span>` : "";
+  let st;
+  if (m.state === "live") st = `<span class="st live">${esc(liveMinute(m))}</span>`;
+  else if (m.state === "finished") st = `<span class="st done">${esc(m.statusLabel || "انتهت")}</span>`;
+  else st = `<span class="st soon">${esc(m.statusLabel || "لم تبدأ")}</span>`;
+
+  card.appendChild(el("div", "ko-head", `<span class="ko-when">${when}${stg}</span>${st}`));
+  card.appendChild(teamRow(m, "home"));
+  card.appendChild(teamRow(m, "away"));
+  return card;
 }
 
-function matchNode(m, isFinal) {
-  const node = el("div", "bm-match" + (isFinal ? " final" : "") + (m.state === "live" ? " live" : ""));
-  node.appendChild(teamSlot(m, "home"));
-  node.appendChild(teamSlot(m, "away"));
-  if (m.state === "live") node.appendChild(el("span", "bm-live", "●"));
-  return node;
-}
-
-function teamSlot(m, side) {
-  const t = m[side];
+function teamRow(m, side) {
+  const t = m[side] || {};
   const s = side === "home" ? m.hs : m.as;
   const o = side === "home" ? m.as : m.hs;
   const decided = m.state === "finished" && s !== null && o !== null;
   const cls = decided ? (s > o ? " win" : s < o ? " lose" : "") : "";
-  const slot = el("div", "bm-slot" + cls);
-  slot.innerHTML = `<span class="f">${t.flag}</span><span class="s">${s === null ? "" : s}</span>`;
-  slot.title = t.ar;
-  return slot;
+  const known = !!t.name;
+  const row = el("div", "ko-row" + cls);
+  row.innerHTML = `
+    <span class="f">${known ? t.flag : "⚽"}</span>
+    <span class="t${known ? "" : " tbd"}">${known ? esc(t.ar) : "يُحدَّد لاحقًا"}</span>
+    <span class="sc">${s === null || s === undefined ? "—" : s}</span>`;
+  return row;
+}
+
+// Live minute: use the provider's minute when present, otherwise estimate from kickoff.
+function liveMinute(m) {
+  if (m.minute) return m.minute;
+  if (m.kickoff) {
+    const mins = Math.round((Date.now() - new Date(m.kickoff).getTime()) / 60000);
+    if (mins >= 0 && mins <= 130) return "≈ " + Math.min(mins, 120) + "′";
+  }
+  return "مباشر";
+}
+
+/* ---------- today's matches ---------- */
+function renderToday(d) {
+  const view = $("#view-today");
+  view.innerHTML = "";
+
+  const withDate = allMatches(d).filter((m) => m.kickoff);
+  if (!withDate.length) {
+    view.appendChild(el("div", "empty-row", "لا توجد مباريات مجدولة بعد."));
+    return;
+  }
+
+  const byDay = new Map();
+  for (const m of withDate) {
+    const k = dayKey(new Date(m.kickoff));
+    if (!byDay.has(k)) byDay.set(k, []);
+    byDay.get(k).push(m);
+  }
+
+  const todayK = dayKey(new Date());
+  let key = todayK, title = "مباريات اليوم", note = "";
+  if (!byDay.has(todayK)) {
+    const days = [...byDay.keys()].sort();
+    const future = days.filter((k) => k > todayK);
+    if (future.length) {
+      key = future[0];
+      title = "أقرب المباريات القادمة";
+      note = "لا توجد مباريات اليوم — هذه مباريات أقرب يوم قادم.";
+    } else {
+      key = days[days.length - 1];
+      title = "آخر مباريات البطولة";
+      note = "انتهت مباريات البطولة — هذه نتائج آخر يوم لعب.";
+    }
+  }
+
+  view.appendChild(el("div", "section-title", `<h2>${title}</h2>`));
+  view.appendChild(el("p", "day-head", esc(dayAr(key))));
+  if (note) view.appendChild(el("p", "map-note top", esc(note)));
+
+  const list = el("div", "today-list");
+  byDay.get(key).sort(byKickoff).forEach((m, i) => list.appendChild(matchCard(m, i, { timeOnly: true, stage: true })));
+  view.appendChild(list);
+  view.appendChild(el("p", "map-note", "التوقيتات معروضة بالتوقيت المحلي لجهازك — تُحدَّث النتائج تلقائيًا."));
+}
+
+function allMatches(d) {
+  const out = [];
+  for (const g of d.groups || []) for (const m of g.matches || []) out.push(m);
+  for (const r of d.knockout || []) for (const m of r.matches || []) out.push(m);
+  return out;
 }
 
 // When knockout hasn't started, render a static map of qualified teams (top 2 per group).
@@ -258,7 +267,7 @@ function seedFromGroups(groups) {
   return wrap;
 }
 
-/* ---------- teams grid (hero view) ---------- */
+/* ---------- teams grid ---------- */
 function renderTeams(groups) {
   const view = $("#view-teams");
   view.innerHTML = "";
@@ -310,6 +319,7 @@ function teamCard(t, i) {
   return card;
 }
 
+/* ---------- live strip (top of page while a match is on) ---------- */
 function renderLiveStrip(live) {
   const strip = $("#liveStrip");
   strip.innerHTML = "";
@@ -318,7 +328,7 @@ function renderLiveStrip(live) {
   for (const m of live) {
     const card = el("div", "live-card");
     card.innerHTML = `
-      <div class="lc-top"><span>${esc(m.stageAr || "")}</span><span class="lc-min">${esc(m.minute || "مباشر")}</span></div>
+      <div class="lc-top"><span>${esc(m.stageAr || "")}</span><span class="lc-min">${esc(liveMinute(m))}</span></div>
       ${liveRow(m.home, m.hs)}
       ${liveRow(m.away, m.as)}`;
     strip.appendChild(card);
@@ -365,16 +375,10 @@ function groupCard(g, i) {
   return card;
 }
 
-function champion(m) {
-  if (!m || m.state !== "finished" || m.hs === null || m.as === null) return null;
-  if (m.hs > m.as) return m.home;
-  if (m.as > m.hs) return m.away;
-  return null;
-}
-
 /* ---------- tabs ---------- */
 function applyTab() {
   $("#view-map").hidden = state.tab !== "map";
+  $("#view-today").hidden = state.tab !== "today";
   $("#view-teams").hidden = state.tab !== "teams";
   $("#view-groups").hidden = state.tab !== "groups";
   document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("is-active", b.dataset.tab === state.tab));
@@ -406,18 +410,19 @@ function dateAr(iso) {
            d.toLocaleTimeString(AR_LATN, TIME_OPTS);
   } catch { return "—"; }
 }
+// Local-timezone day key (YYYY-MM-DD) — string comparison keeps chronological order.
+function dayKey(dt) {
+  try { return dt.toLocaleDateString("en-CA"); } catch { return ""; }
+}
+function dayAr(key) {
+  try {
+    return new Date(key + "T12:00:00").toLocaleDateString(AR_LATN, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  } catch { return key; }
+}
+function byKickoff(a, b) {
+  return (a.kickoff || "").localeCompare(b.kickoff || "");
+}
 
 /* ---------- boot ---------- */
 load(true);
-state.timer = setInterval(() => load(false), REFRESH_MS);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) load(false); });
-
-// Redraw the bracket connectors on resize / orientation change.
-let rzTimer;
-window.addEventListener("resize", () => {
-  clearTimeout(rzTimer);
-  rzTimer = setTimeout(() => {
-    const bmap = document.querySelector("#view-map .bmap");
-    if (bmap) drawConnectors(bmap);
-  }, 150);
-});

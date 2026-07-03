@@ -9,7 +9,7 @@ const TSDB = "https://www.thesportsdb.com/api/v1/json/3";
 const WC_LEAGUE_NAME = "fifa world cup";
 const WC_LEAGUE_ID_FALLBACK = "4429"; // TheSportsDB id for "FIFA World Cup"
 const SEASON = "2026";
-const CACHE_TTL = 60; // seconds a cached payload is considered fresh
+const CACHE_TTL = 30; // seconds a cached payload is considered fresh (keeps live scores close to real time)
 const CACHE_HARD = 1800; // keep stale copy up to 30m for stale-while-revalidate
 
 export default {

@@ -20,6 +20,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
@@ -90,14 +91,16 @@ main.wrap { position: relative; z-index: 1; }
 
 /* ===== Tabs ===== */
 .tabs {
-  display: flex; gap: 6px; margin: 16px 0 4px; padding: 5px;
+  display: flex; gap: 4px; margin: 16px 0 4px; padding: 5px;
   background: var(--card); border: 1px solid var(--line); border-radius: 999px;
+  overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
 }
+.tabs::-webkit-scrollbar { height: 0; }
 .tab {
-  flex: 1; appearance: none; cursor: pointer;
+  flex: 1 0 auto; appearance: none; cursor: pointer; white-space: nowrap;
   border: 0; background: transparent; color: var(--ink-dim);
-  font-family: inherit; font-size: 14.5px; font-weight: 700;
-  padding: 11px 10px; border-radius: 999px; transition: .22s;
+  font-family: inherit; font-size: 13px; font-weight: 700;
+  padding: 10px 9px; border-radius: 999px; transition: .22s;
 }
 .tab.is-active { background: linear-gradient(180deg, var(--gold-2), var(--gold)); color: #241a02; box-shadow: 0 8px 20px -10px rgba(244,192,69,.8); }
 
@@ -266,6 +269,56 @@ main.wrap { position: relative; z-index: 1; }
   .bm-center .bm-match { max-width: 108px; }
   .bm-champ { font-size: 13px; }
 }
+
+/* ===== Knockout ladder + today's matches — matchup cards ===== */
+.rounds-nav { margin-top: 2px; }
+.rounds-nav .chip .cnt { font-size: 10px; color: var(--ink-mute); font-weight: 700; margin-inline-start: 3px; font-variant-numeric: tabular-nums; }
+.rounds-nav .chip.on .cnt { color: #7ddba4; }
+
+.ko-list, .today-list { display: grid; grid-template-columns: 1fr; gap: 10px; }
+@media (min-width: 640px) { .ko-list, .today-list { grid-template-columns: 1fr 1fr; } }
+@media (min-width: 980px) { .ko-list, .today-list { grid-template-columns: 1fr 1fr 1fr; } }
+
+.ko-card {
+  background: linear-gradient(180deg, var(--card-2), var(--card));
+  border: 1px solid var(--line); border-radius: 14px;
+  padding: 10px 12px 8px; box-shadow: var(--shadow);
+  animation: rise .4s both;
+}
+.ko-card.live {
+  border-color: rgba(255,77,94,.55);
+  background: linear-gradient(180deg, rgba(255,77,94,.10), var(--card));
+}
+
+.ko-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 11px; color: var(--ink-mute); margin-bottom: 7px;
+  padding-bottom: 7px; border-bottom: 1px dashed rgba(255,255,255,.08);
+}
+.ko-head .ko-when { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.ko-head .tm { font-size: 16px; font-weight: 800; color: var(--gold-2); font-variant-numeric: tabular-nums; }
+.ko-head .stg {
+  background: var(--card-2); border: 1px solid var(--line); border-radius: 999px;
+  padding: 2px 9px; font-weight: 700; font-size: 10px; color: var(--ink-dim); white-space: nowrap;
+}
+.ko-head .st { font-weight: 800; white-space: nowrap; }
+.ko-head .st.done { color: var(--ink-dim); }
+.ko-head .st.soon { color: var(--gold-2); }
+.ko-head .st.live { color: #ffb3ba; display: inline-flex; align-items: center; gap: 6px; }
+.ko-head .st.live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--live); animation: pulse 1.4s infinite; }
+
+.ko-row { display: flex; align-items: center; gap: 10px; padding: 5px 4px; border-radius: 9px; }
+.ko-row .f { font-size: 25px; line-height: 1; filter: drop-shadow(0 3px 8px rgba(0,0,0,.5)); }
+.ko-row .t { flex: 1; font-size: 14.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ko-row .t.tbd { color: var(--ink-mute); font-weight: 600; }
+.ko-row .sc { font-size: 16.5px; font-weight: 800; font-variant-numeric: tabular-nums; min-width: 20px; text-align: center; color: var(--ink-dim); }
+.ko-row.win { background: linear-gradient(-90deg, rgba(23,201,100,.13), transparent 70%); }
+.ko-row.win .t { color: var(--ink); }
+.ko-row.win .sc { color: var(--green); }
+.ko-row.lose { opacity: .55; }
+
+.day-head { margin: -4px 4px 10px; font-size: 13.5px; font-weight: 800; color: var(--gold-2); }
+.map-note.top { margin: -2px 4px 12px; text-align: start; }
 
 /* ===== Empty / loading ===== */
 .empty { text-align: center; padding: 48px 16px; color: var(--ink-dim); }

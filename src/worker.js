@@ -29,7 +29,7 @@ export default {
 
   // Cron trigger warms the edge cache so the first visitor after a goal gets fresh data.
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(rebuildAndCache(request_from("/api/bracket"), ctx).catch(() => {}));
+    ctx.waitUntil(rebuildAndCache(request_from("/api/bracket"), env, ctx).catch(() => {}));
   },
 };
 
@@ -49,11 +49,11 @@ async function handleApi(request, env, ctx) {
     const ageMs = Date.now() - builtAt;
     if (ageMs > CACHE_TTL * 1000) {
       // Serve stale immediately, refresh in the background.
-      ctx.waitUntil(rebuildAndCache(request, ctx).catch(() => {}));
+      ctx.waitUntil(rebuildAndCache(request, env, ctx).catch(() => {}));
     }
     return cors(hit);
   }
-  const fresh = await rebuildAndCache(request, ctx);
+  const fresh = await rebuildAndCache(request, env, ctx);
   return cors(fresh);
 }
 
@@ -61,10 +61,10 @@ function cacheKey(request) {
   return new Request(new URL("/api/bracket", request.url).toString(), { method: "GET" });
 }
 
-async function rebuildAndCache(request, ctx) {
+async function rebuildAndCache(request, env, ctx) {
   let payload;
   try {
-    payload = await buildData();
+    payload = await buildData(env);
   } catch (err) {
     payload = { error: String(err && err.message || err), updated: Date.now(), groups: [], knockout: [] };
   }
@@ -108,7 +108,22 @@ async function resolveLeagueId() {
   return WC_LEAGUE_ID_FALLBACK;
 }
 
-async function buildData() {
+// Pick the data provider: football-data.org when a token is configured (higher
+// quality, real World Cup coverage), otherwise the keyless TheSportsDB source.
+async function buildData(env) {
+  const token = env && env.FOOTBALL_DATA_TOKEN;
+  if (token) {
+    try {
+      const fd = await buildFromFootballData(token);
+      if (fd.counts.groups > 0 || fd.counts.matches > 0) return fd;
+    } catch (_) {
+      /* fall back to TheSportsDB */
+    }
+  }
+  return buildFromTheSportsDB();
+}
+
+async function buildFromTheSportsDB() {
   const leagueId = await resolveLeagueId();
   let events = [];
   try {
@@ -118,6 +133,130 @@ async function buildData() {
     events = [];
   }
   return normalize(events, leagueId);
+}
+
+// ---- football-data.org provider ------------------------------------------
+
+const FD_BASE = "https://api.football-data.org/v4";
+
+async function fd(path, token) {
+  const res = await fetch(FD_BASE + path, {
+    headers: { "X-Auth-Token": token },
+    cf: { cacheTtl: 30, cacheEverything: true },
+  });
+  if (!res.ok) throw new Error("football-data " + res.status);
+  return res.json();
+}
+
+const FD_STAGE = {
+  LAST_32: { stage: "r32", order: 2, ar: "دور الـ32" },
+  LAST_16: { stage: "r16", order: 3, ar: "دور الـ16" },
+  QUARTER_FINALS: { stage: "qf", order: 4, ar: "ربع النهائي" },
+  SEMI_FINALS: { stage: "sf", order: 5, ar: "نصف النهائي" },
+  THIRD_PLACE: { stage: "third", order: 6, ar: "تحديد المركز الثالث" },
+  FINAL: { stage: "final", order: 7, ar: "النهائي" },
+};
+
+function fdTeam(t) {
+  const info = teamInfo((t && t.name) || "");
+  if (!info.iso && t && t.crest) info.crest = t.crest;
+  return info;
+}
+
+function fdStatusState(m) {
+  const s = m.status;
+  if (s === "IN_PLAY") return { state: "live", label: "مباشر" };
+  if (s === "PAUSED") return { state: "live", label: "استراحة" };
+  if (s === "FINISHED" || s === "AWARDED") return { state: "finished", label: "انتهت" };
+  return { state: "scheduled", label: "لم تبدأ" };
+}
+
+function fdMatch(m) {
+  const st = fdStatusState(m);
+  const ft = (m.score && m.score.fullTime) || {};
+  const hs = ft.home === undefined ? null : ft.home;
+  const as = ft.away === undefined ? null : ft.away;
+  return {
+    id: m.id,
+    home: fdTeam(m.homeTeam),
+    away: fdTeam(m.awayTeam),
+    hs,
+    as,
+    state: st.state,
+    statusLabel: st.label,
+    minute: st.state === "live" ? (m.minute ? m.minute + "'" : "مباشر") : null,
+    kickoff: m.utcDate || null,
+  };
+}
+
+function fdGroupLetter(g) {
+  return g ? String(g).replace(/GROUP[_\s]*/i, "").toUpperCase() : null;
+}
+
+async function buildFromFootballData(token) {
+  const [standingsRes, matchesRes] = await Promise.all([
+    fd("/competitions/WC/standings", token).catch(() => null),
+    fd("/competitions/WC/matches", token).catch(() => null),
+  ]);
+  const matches = (matchesRes && matchesRes.matches) || [];
+
+  // Group tables from the standings endpoint.
+  const groups = [];
+  const byLetter = new Map();
+  for (const s of (standingsRes && standingsRes.standings) || []) {
+    if (s.type && s.type !== "TOTAL") continue;
+    const letter = fdGroupLetter(s.group);
+    if (!letter) continue;
+    const table = (s.table || []).map((row) => {
+      const info = fdTeam(row.team);
+      return {
+        ...info,
+        P: row.playedGames, W: row.won, D: row.draw, L: row.lost,
+        GF: row.goalsFor, GA: row.goalsAgainst,
+        GD: row.goalDifference, Pts: row.points,
+      };
+    });
+    const g = { name: letter, matches: [], table };
+    groups.push(g);
+    byLetter.set(letter, g);
+  }
+  groups.sort((a, b) => a.name.localeCompare(b.name));
+
+  // Knockout rounds + live from the matches endpoint.
+  const koMap = new Map();
+  const live = [];
+  for (const m of matches) {
+    const mm = fdMatch(m);
+    if (mm.state === "live") live.push(mm);
+    const info = FD_STAGE[m.stage];
+    if (info) {
+      mm.stageAr = info.ar;
+      if (!koMap.has(info.stage))
+        koMap.set(info.stage, { stage: info.stage, ar: info.ar, order: info.order, matches: [] });
+      koMap.get(info.stage).matches.push(mm);
+    } else {
+      mm.stageAr = "دور المجموعات";
+      const g = byLetter.get(fdGroupLetter(m.group));
+      if (g) g.matches.push(mm);
+    }
+  }
+  const knockout = [...koMap.values()]
+    .sort((a, b) => a.order - b.order)
+    .map((r) => ({ stage: r.stage, ar: r.ar, matches: r.matches.sort(byKickoff) }));
+
+  const teams = new Set();
+  for (const g of groups) for (const t of g.table) teams.add(t.name);
+
+  return {
+    updated: Date.now(),
+    season: SEASON,
+    source: "football-data.org",
+    provider: "football-data",
+    counts: { groups: groups.length, teams: teams.size, matches: matches.length, live: live.length },
+    live: live.sort(byKickoff),
+    groups: groups.map((g) => ({ name: g.name, matches: g.matches.sort(byKickoff), table: g.table })),
+    knockout,
+  };
 }
 
 // Detect a match's stage and (for the group phase) its group letter.

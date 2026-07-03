@@ -201,17 +201,28 @@ main.wrap { position: relative; z-index: 1; }
 
 .empty-row { text-align: center; color: var(--ink-mute); font-size: 12.5px; padding: 16px; }
 
-/* ===== Bracket ===== */
-.bracket-scroll { overflow-x: auto; padding: 6px 2px 18px; -webkit-overflow-scrolling: touch; }
-.bracket-scroll::-webkit-scrollbar { height: 8px; }
-.bracket-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,.14); border-radius: 8px; }
-.bracket { display: inline-flex; gap: 18px; align-items: stretch; min-width: min-content; padding: 4px; }
-.round-col { display: flex; flex-direction: column; justify-content: space-around; gap: 14px; min-width: 210px; }
-.round-col > .round-name {
-  position: sticky; top: 0; text-align: center; font-size: 12px; font-weight: 800;
-  color: var(--gold-2); letter-spacing: .4px; margin-bottom: 4px;
-  background: rgba(4,18,31,.7); padding: 6px; border-radius: 8px; border: 1px solid var(--line);
+/* ===== Knockout (mobile-first, fully visible — no sideways scroll) ===== */
+.ko { display: flex; flex-direction: column; gap: 24px; }
+.champ-banner {
+  display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap;
+  padding: 14px 16px; border-radius: 16px; text-align: center;
+  background: linear-gradient(180deg, rgba(244,192,69,.18), rgba(244,192,69,.05));
+  border: 1px solid rgba(244,192,69,.45); box-shadow: var(--shadow);
 }
+.champ-banner .cb-cup { font-size: 26px; filter: drop-shadow(0 4px 10px rgba(244,192,69,.5)); }
+.champ-banner .cb-txt { font-size: 13px; font-weight: 700; color: var(--ink-dim); }
+.champ-banner .cb-team { display: inline-flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 900; color: var(--gold-2); }
+.champ-banner .cb-team .f { font-size: 24px; }
+
+.ko-round { display: flex; flex-direction: column; gap: 12px; }
+.ko-round-head { display: flex; align-items: center; gap: 12px; }
+.ko-round-head .line { flex: 1; height: 1px; background: linear-gradient(90deg, transparent, var(--line), transparent); }
+.ko-round-head h3 { margin: 0; font-size: 14px; font-weight: 800; color: var(--gold-2); white-space: nowrap; letter-spacing: .3px; }
+
+.ko-matches { display: grid; grid-template-columns: 1fr; gap: 12px; }
+@media (min-width: 520px) { .ko-matches { grid-template-columns: 1fr 1fr; } }
+@media (min-width: 860px) { .ko-matches { grid-template-columns: repeat(4, 1fr); } }
+.ko-round.final .ko-matches { grid-template-columns: 1fr; max-width: 360px; margin: 0 auto; width: 100%; }
 
 .match {
   background: var(--card); border: 1px solid var(--line); border-radius: 13px;
@@ -230,10 +241,7 @@ main.wrap { position: relative; z-index: 1; }
 .m-team.win .t { color: var(--gold-2); }
 .m-team.win .sc { color: var(--gold-2); }
 .m-team.lose { opacity: .55; }
-
-.trophy-col { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 90px; }
-.trophy-col .big { font-size: 46px; filter: drop-shadow(0 8px 18px rgba(244,192,69,.5)); }
-.trophy-col .champ { margin-top: 8px; text-align: center; font-size: 13px; font-weight: 800; color: var(--gold-2); }
+.match.is-final { margin: 0 auto; width: 100%; }
 
 /* ===== Empty / loading ===== */
 .empty { text-align: center; padding: 48px 16px; color: var(--ink-dim); }

@@ -181,32 +181,36 @@ function renderBracket(rounds, d) {
   const view = $("#view-bracket");
   view.innerHTML = "";
   if (!rounds.length) {
+    view.appendChild(el("div", "section-title", "<h2>خط سير البطولة</h2>"));
     view.appendChild(el("div", "empty-row", "لم تبدأ الأدوار الإقصائية بعد — ستظهر شجرة المباريات هنا تلقائيًا."));
     return;
   }
   view.appendChild(el("div", "section-title", "<h2>خط سير البطولة</h2>"));
 
-  const scroll = el("div", "bracket-scroll");
-  const bracket = el("div", "bracket");
+  const ko = el("div", "ko");
 
-  rounds.forEach((r) => bracket.appendChild(roundColumn(r)));
-
-  // Champion column if final decided
+  // Champion banner when the final is decided.
   const final = rounds.find((r) => r.stage === "final");
   const champ = final && champion(final.matches[0]);
-  const tcol = el("div", "trophy-col");
-  tcol.innerHTML = `<div class="big">🏆</div><div class="champ">${champ ? champ.flag + "<br>" + esc(champ.ar) : "البطل"}</div>`;
-  bracket.appendChild(tcol);
+  if (champ) {
+    ko.appendChild(el("div", "champ-banner",
+      `<span class="cb-cup">🏆</span><span class="cb-txt">بطل العالم</span>
+       <span class="cb-team"><span class="f">${champ.flag}</span>${esc(champ.ar)}</span>`));
+  }
 
-  scroll.appendChild(bracket);
-  view.appendChild(scroll);
+  rounds.forEach((r) => ko.appendChild(koRound(r)));
+  view.appendChild(ko);
 }
 
-function roundColumn(r) {
-  const col = el("div", "round-col");
-  col.appendChild(el("div", "round-name", esc(r.ar)));
-  (r.matches || []).forEach((m) => col.appendChild(matchCard(m, r.stage)));
-  return col;
+function koRound(r) {
+  const isFinal = r.stage === "final";
+  const round = el("div", "ko-round" + (isFinal ? " final" : ""));
+  round.appendChild(el("div", "ko-round-head",
+    `<span class="line"></span><h3>${isFinal ? "🏆 " : ""}${esc(r.ar)}</h3><span class="line"></span>`));
+  const wrap = el("div", "ko-matches");
+  (r.matches || []).forEach((m) => wrap.appendChild(matchCard(m, r.stage)));
+  round.appendChild(wrap);
+  return round;
 }
 
 function matchCard(m, stage) {

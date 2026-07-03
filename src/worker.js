@@ -39,6 +39,11 @@ function request_from(path) {
 
 // ---- API handler with stale-while-revalidate edge caching ----------------
 
+// Serve-stale is capped: within STALE_MAX_MS we serve the cached copy and
+// refresh in the background; older than that we rebuild synchronously so a
+// returning visitor never sees minutes-old bracket state.
+const STALE_MAX_MS = 3 * 60 * 1000;
+
 async function handleApi(request, env, ctx) {
   const cache = caches.default;
   const key = cacheKey(request);
@@ -47,11 +52,12 @@ async function handleApi(request, env, ctx) {
   if (hit) {
     const builtAt = Number(hit.headers.get("x-built-at") || 0);
     const ageMs = Date.now() - builtAt;
-    if (ageMs > CACHE_TTL * 1000) {
+    if (ageMs <= CACHE_TTL * 1000) return cors(hit);
+    if (ageMs <= STALE_MAX_MS) {
       // Serve stale immediately, refresh in the background.
       ctx.waitUntil(rebuildAndCache(request, env, ctx).catch(() => {}));
+      return cors(hit);
     }
-    return cors(hit);
   }
   const fresh = await rebuildAndCache(request, env, ctx);
   return cors(fresh);
@@ -62,11 +68,20 @@ function cacheKey(request) {
 }
 
 async function rebuildAndCache(request, env, ctx) {
+  const cache = caches.default;
   let payload;
   try {
     payload = await buildData(env);
   } catch (err) {
     payload = { error: String(err && err.message || err), updated: Date.now(), groups: [], knockout: [] };
+  }
+  // Never clobber good cached data with an empty payload (rate-limit blips,
+  // upstream hiccups): keep serving the last good copy instead.
+  const gotNothing =
+    !payload || (((payload.groups || []).length === 0) && ((payload.knockout || []).length === 0));
+  if (gotNothing) {
+    const prev = await cache.match(cacheKey(request));
+    if (prev) return prev;
   }
   const body = JSON.stringify(payload);
   const resp = new Response(body, {
@@ -76,7 +91,6 @@ async function rebuildAndCache(request, env, ctx) {
       "x-built-at": String(Date.now()),
     },
   });
-  const cache = caches.default;
   ctx.waitUntil(cache.put(cacheKey(request), resp.clone()));
   return resp;
 }
@@ -184,7 +198,7 @@ function fdMatch(m) {
     as,
     state: st.state,
     statusLabel: st.label,
-    minute: st.state === "live" ? (m.minute ? m.minute + "'" : "مباشر") : null,
+    minute: st.state === "live" && m.minute ? m.minute + "'" : null,
     kickoff: m.utcDate || null,
   };
 }
@@ -247,6 +261,11 @@ async function buildFromFootballData(token) {
   const teams = new Set();
   for (const g of groups) for (const t of g.table) teams.add(t.name);
 
+  // The matches LIST endpoint has no live minute — fetch per-match details for
+  // the (few) live games. `live` shares object refs with the round arrays, so
+  // the minute shows everywhere.
+  await enrichLiveMinutes(live, token);
+
   return {
     updated: Date.now(),
     season: SEASON,
@@ -257,6 +276,42 @@ async function buildFromFootballData(token) {
     groups: groups.map((g) => ({ name: g.name, matches: g.matches.sort(byKickoff), table: g.table })),
     knockout,
   };
+}
+
+// Fetch the real minute for live matches from the per-match endpoint (capped
+// to stay inside the free-tier rate limit); anything we can't fetch gets an
+// estimate computed from kickoff time.
+async function enrichLiveMinutes(live, token) {
+  const detailed = live.slice(0, 3);
+  await Promise.all(
+    detailed.map(async (m) => {
+      try {
+        const d = await fd(`/matches/${m.id}`, token);
+        const raw = d && (d.minute ?? (d.match && d.match.minute));
+        if (raw !== null && raw !== undefined && raw !== "") {
+          m.minute = String(raw).endsWith("'") ? String(raw) : raw + "'";
+          return;
+        }
+      } catch (_) {
+        /* fall back to the estimate below */
+      }
+      m.minute = estimateMinute(m);
+    })
+  );
+  for (const m of live.slice(3)) m.minute = estimateMinute(m);
+}
+
+// Rough live minute from kickoff time: first half, halftime window, second
+// half (kickoff+~60), capped at 90+.
+function estimateMinute(m) {
+  if (m.statusLabel === "استراحة") return "استراحة";
+  if (!m.kickoff) return "مباشر";
+  const el = Math.floor((Date.now() - Date.parse(m.kickoff)) / 60000);
+  if (el < 1) return "1'";
+  if (el <= 45) return el + "'";
+  if (el <= 60) return "45+'";
+  if (el <= 105) return Math.min(el - 15, 90) + "'";
+  return "90+'";
 }
 
 // Detect a match's stage and (for the group phase) its group letter.

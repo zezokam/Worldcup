@@ -14,10 +14,9 @@ crons = ["*/5 * * * *"]
 [observability]
 enabled = true
 
-# The custom domain is attached after the first deploy:
-#   npx wrangler deploy
-#   npx wrangler triggers ...           (crons deploy automatically)
-# Then map the hostname (see README) — either via the dashboard or:
-# [[routes]]
-# pattern = "worldcup.alkamali.uk"
-# custom_domain = true
+# Custom domain — provisioned automatically on deploy (creates the DNS record
+# + certificate). Requires the API token to have DNS:Edit + Workers Routes:Edit
+# on the alkamali.uk zone.
+[[routes]]
+pattern = "worldcup.alkamali.uk"
+custom_domain = true

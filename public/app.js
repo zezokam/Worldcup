@@ -390,17 +390,20 @@ function setEmpty(msg, showRetry) {
   $("#emptyMsg").textContent = msg;
   $("#retry").hidden = !showRetry;
 }
+// Arabic wording but Latin (English) digits everywhere — `-u-nu-latn` forces 0-9.
+const AR_LATN = "ar-u-nu-latn";
 function signed(n) { return n > 0 ? "+" + n : String(n); }
+const TIME_OPTS = { hour: "2-digit", minute: "2-digit", hour12: false, hourCycle: "h23" };
 function timeAr(ts) {
-  try { return new Date(ts).toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" }); }
+  try { return new Date(ts).toLocaleTimeString(AR_LATN, TIME_OPTS); }
   catch { return "—"; }
 }
 function dateAr(iso) {
   if (!iso) return "—";
   try {
     const d = new Date(iso);
-    return d.toLocaleDateString("ar-SA", { day: "numeric", month: "short" }) + " · " +
-           d.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" });
+    return d.toLocaleDateString(AR_LATN, { day: "numeric", month: "short" }) + " · " +
+           d.toLocaleTimeString(AR_LATN, TIME_OPTS);
   } catch { return "—"; }
 }
 

@@ -78,6 +78,7 @@ function render() {
   renderToday(d);
   renderTeams(d.groups || []);
   renderGroups(d.groups || []);
+  renderStats(d);
   applyTab(true); // views just rendered — visible one is already correct
 }
 
@@ -452,6 +453,71 @@ function renderToday(d) {
   view.appendChild(el("p", "map-note", "التوقيتات معروضة بالتوقيت المحلي لجهازك — تُحدَّث النتائج تلقائيًا."));
 }
 
+/* ---------- tournament stats: scorers, assists, numbers ---------- */
+function renderStats(d) {
+  const view = $("#view-stats");
+  view.innerHTML = "";
+
+  // Tournament numbers computed from the full match list.
+  const fin = allMatches(d).filter((m) => m.state === "finished" && m.hs !== null && m.as !== null);
+  const goals = fin.reduce((n, m) => n + m.hs + m.as, 0);
+  const clean = fin.reduce((n, m) => n + (m.as === 0 ? 1 : 0) + (m.hs === 0 ? 1 : 0), 0);
+  view.appendChild(el("div", "section-title", "<h2>أرقام البطولة</h2>"));
+  const tiles = el("div", "stats");
+  tiles.innerHTML = `
+    <div class="stat"><b>${fin.length}</b><span>مباراة لُعبت</span></div>
+    <div class="stat"><b>${goals}</b><span>هدفًا</span></div>
+    <div class="stat"><b>${fin.length ? (goals / fin.length).toFixed(1) : "—"}</b><span>معدل الأهداف/مباراة</span></div>
+    <div class="stat"><b>${clean}</b><span>شباك نظيفة</span></div>`;
+  view.appendChild(tiles);
+
+  const scorers = d.scorers || [];
+  view.appendChild(el("div", "section-title", "<h2>هداف المونديال</h2>"));
+  if (!scorers.length) {
+    view.appendChild(el("div", "empty-row", "تظهر قائمة الهدافين هنا تلقائيًا بعد تسجيل الأهداف."));
+  } else {
+    view.appendChild(playerTable(scorers.slice(0, 10), "goals"));
+  }
+
+  const makers = scorers
+    .filter((s) => (s.assists || 0) > 0)
+    .sort((a, b) => b.assists - a.assists || b.goals - a.goals)
+    .slice(0, 10);
+  view.appendChild(el("div", "section-title", "<h2>صنّاع الألعاب</h2>"));
+  if (!makers.length) {
+    view.appendChild(el("div", "empty-row", "تظهر القائمة بعد تسجيل التمريرات الحاسمة."));
+  } else {
+    view.appendChild(playerTable(makers, "assists"));
+  }
+
+  if (scorers.length)
+    view.appendChild(el("p", "map-note", "أسماء اللاعبين تَرِد من المصدر بالأحرف اللاتينية — تُحدَّث القوائم تلقائيًا بعد كل مباراة."));
+}
+
+function playerTable(list, key) {
+  const card = el("div", "group-card");
+  const head =
+    key === "goals"
+      ? "<th>أهداف</th><th>صناعة</th><th>جزاء</th>"
+      : "<th>صناعة</th><th>أهداف</th><th>لعب</th>";
+  const rows = list
+    .map((s, i) => {
+      const main =
+        key === "goals"
+          ? `<td class="pts">${s.goals}</td><td>${s.assists || 0}</td><td>${s.penalties || 0}</td>`
+          : `<td class="pts">${s.assists}</td><td>${s.goals || 0}</td><td>${s.played ?? "—"}</td>`;
+      return `<tr${i === 0 ? ' class="qualify"' : ""}>
+        <td class="rank">${i + 1}</td>
+        <td class="team-col"><span class="team-cell"><span class="f">${s.team.flag}</span><span class="t player">${esc(s.name)}<small>${esc(s.team.ar)}</small></span></span></td>
+        ${main}</tr>`;
+    })
+    .join("");
+  card.innerHTML = `<table class="table">
+    <thead><tr><th>#</th><th class="team-col">اللاعب</th>${head}</tr></thead>
+    <tbody>${rows}</tbody></table>`;
+  return card;
+}
+
 function allMatches(d) {
   const out = [];
   for (const g of d.groups || []) for (const m of g.matches || []) out.push(m);
@@ -613,6 +679,7 @@ function applyTab(skipRefresh) {
   $("#view-today").hidden = state.tab !== "today";
   $("#view-teams").hidden = state.tab !== "teams";
   $("#view-groups").hidden = state.tab !== "groups";
+  $("#view-stats").hidden = state.tab !== "stats";
   document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("is-active", b.dataset.tab === state.tab));
   // Views rendered while hidden (display:none) have zeroed layout — scroll
   // restores and SVG connector geometry silently no-op. Re-render the view
@@ -627,6 +694,7 @@ function refreshVisibleView() {
   else if (state.tab === "today") renderToday(d);
   else if (state.tab === "teams") renderTeams(d.groups || []);
   else if (state.tab === "groups") renderGroups(d.groups || []);
+  else if (state.tab === "stats") renderStats(d);
 }
 
 document.querySelectorAll(".tab").forEach((b) =>

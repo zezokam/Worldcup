@@ -153,10 +153,10 @@ async function buildFromTheSportsDB() {
 
 const FD_BASE = "https://api.football-data.org/v4";
 
-async function fd(path, token) {
+async function fd(path, token, ttl = 30) {
   const res = await fetch(FD_BASE + path, {
     headers: { "X-Auth-Token": token },
-    cf: { cacheTtl: 30, cacheEverything: true },
+    cf: { cacheTtl: ttl, cacheEverything: true },
   });
   if (!res.ok) throw new Error("football-data " + res.status);
   return res.json();
@@ -208,11 +208,23 @@ function fdGroupLetter(g) {
 }
 
 async function buildFromFootballData(token) {
-  const [standingsRes, matchesRes] = await Promise.all([
+  // Scorers change rarely (only after goals), so cache that call harder to
+  // stay well inside the free-tier rate limit.
+  const [standingsRes, matchesRes, scorersRes] = await Promise.all([
     fd("/competitions/WC/standings", token).catch(() => null),
     fd("/competitions/WC/matches", token).catch(() => null),
+    fd("/competitions/WC/scorers?limit=20", token, 120).catch(() => null),
   ]);
   const matches = (matchesRes && matchesRes.matches) || [];
+
+  const scorers = ((scorersRes && scorersRes.scorers) || []).map((s) => ({
+    name: (s.player && s.player.name) || "",
+    team: fdTeam(s.team),
+    played: s.playedMatches ?? null,
+    goals: s.goals ?? 0,
+    assists: s.assists ?? 0,
+    penalties: s.penalties ?? 0,
+  }));
 
   // Group tables from the standings endpoint.
   const groups = [];
@@ -273,6 +285,7 @@ async function buildFromFootballData(token) {
     provider: "football-data",
     counts: { groups: groups.length, teams: teams.size, matches: matches.length, live: live.length },
     live: live.sort(byKickoff),
+    scorers,
     groups: groups.map((g) => ({ name: g.name, matches: g.matches.sort(byKickoff), table: g.table })),
     knockout,
   };

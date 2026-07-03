@@ -121,6 +121,10 @@ main.wrap { position: relative; z-index: 1; }
 .live-row .nm span.t { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .live-row .sc { font-size: 17px; font-weight: 800; font-variant-numeric: tabular-nums; }
 
+/* ===== Player stats tables ===== */
+.table .t.player { display: flex; flex-direction: column; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.table .t.player small { color: var(--ink-mute); font-size: 10.5px; font-weight: 600; }
+
 /* ===== Section titles ===== */
 .view { margin-top: 8px; }
 .section-title { display: flex; align-items: center; gap: 10px; margin: 22px 4px 12px; }

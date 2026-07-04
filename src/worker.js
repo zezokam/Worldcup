@@ -22,6 +22,9 @@ export default {
     if (url.pathname === "/api/health") {
       return json({ ok: true, ts: Date.now() });
     }
+    if (url.pathname === "/api/debug") {
+      return handleDebug(env);
+    }
     // Everything else -> static assets (index.html, css, js).
     if (env.ASSETS) return env.ASSETS.fetch(request);
     return new Response("Not found", { status: 404 });
@@ -35,6 +38,33 @@ export default {
 
 function request_from(path) {
   return new Request("https://worldcup.internal" + path);
+}
+
+// Diagnostics: raw knockout fixtures exactly as the data source returns them
+// (bypasses every cache layer), plus the remaining rate-limit budget.
+async function handleDebug(env) {
+  const token = env && env.FOOTBALL_DATA_TOKEN;
+  if (!token) return json({ error: "no FOOTBALL_DATA_TOKEN configured" });
+  const out = { checkedAt: new Date().toISOString() };
+  try {
+    const res = await fetch(FD_BASE + "/competitions/WC/matches?stage=LAST_16", {
+      headers: { "X-Auth-Token": token },
+    });
+    out.upstreamStatus = res.status;
+    out.rateRemainingPerMinute = res.headers.get("x-requests-available-minute");
+    const data = await res.json();
+    out.count = (data.matches || []).length;
+    out.last16 = (data.matches || []).map((m) => ({
+      id: m.id,
+      utcDate: m.utcDate,
+      status: m.status,
+      home: (m.homeTeam && m.homeTeam.name) || null,
+      away: (m.awayTeam && m.awayTeam.name) || null,
+    }));
+  } catch (e) {
+    out.error = String(e && e.message || e);
+  }
+  return json(out);
 }
 
 // ---- API handler with stale-while-revalidate edge caching ----------------
@@ -215,6 +245,9 @@ async function buildFromFootballData(token) {
     fd("/competitions/WC/matches", token).catch(() => null),
     fd("/competitions/WC/scorers?limit=20", token, 120).catch(() => null),
   ]);
+  // If either core call failed (rate-limit blip), bail out so the caller keeps
+  // serving the last good cached payload instead of a half-empty one.
+  if (!standingsRes || !matchesRes) throw new Error("football-data partial outage");
   const matches = (matchesRes && matchesRes.matches) || [];
 
   const scorers = ((scorersRes && scorersRes.scorers) || []).map((s) => ({

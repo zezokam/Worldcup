@@ -220,12 +220,16 @@ function fdMatch(m) {
   const ft = (m.score && m.score.fullTime) || {};
   const hs = ft.home === undefined ? null : ft.home;
   const as = ft.away === undefined ? null : ft.away;
+  const pen = (m.score && m.score.penalties) || null;
   return {
     id: m.id,
     home: fdTeam(m.homeTeam),
     away: fdTeam(m.awayTeam),
     hs,
     as,
+    // Official winner marker ("HOME_TEAM"/"AWAY_TEAM") — decides shootouts too.
+    winner: (m.score && m.score.winner) || null,
+    pen: pen && pen.home !== null && pen.home !== undefined ? { h: pen.home, a: pen.away } : null,
     state: st.state,
     statusLabel: st.label,
     minute: st.state === "live" && m.minute ? m.minute + "'" : null,
@@ -302,6 +306,7 @@ async function buildFromFootballData(token) {
   const knockout = [...koMap.values()]
     .sort((a, b) => a.order - b.order)
     .map((r) => ({ stage: r.stage, ar: r.ar, matches: r.matches.sort(byKickoff) }));
+  propagateWinners(knockout);
 
   const teams = new Set();
   for (const g of groups) for (const t of g.table) teams.add(t.name);
@@ -322,6 +327,73 @@ async function buildFromFootballData(token) {
     groups: groups.map((g) => ({ name: g.name, matches: g.matches.sort(byKickoff), table: g.table })),
     knockout,
   };
+}
+
+// ---- winner propagation ---------------------------------------------------
+// Fill TBD sides of the next knockout round from finished feeder matches.
+// The feeder→slot mapping is positional (slot i ← feeders 2i, 2i+1), but we
+// only trust an ordering after VALIDATING it against ≥2 pairings the source
+// itself already filled — so a wrong guess can never place a team in the
+// wrong tie. Filled sides are flagged `provisional` until the source confirms.
+
+function winnerTeam(m) {
+  if (m.state !== "finished") return null;
+  if (m.winner === "HOME_TEAM") return m.home;
+  if (m.winner === "AWAY_TEAM") return m.away;
+  if (m.hs === null || m.as === null) return null;
+  if (m.hs > m.as) return m.home;
+  if (m.as > m.hs) return m.away;
+  return null; // drawn with no official winner — cannot resolve
+}
+
+export function propagateWinners(rounds) {
+  const seq = rounds.filter((r) => r.stage !== "third");
+  const byId = (a, b) => Number(a.id) - Number(b.id);
+  const byKick = (a, b) => (a.kickoff || "").localeCompare(b.kickoff || "") || byId(a, b);
+
+  for (let k = 0; k + 1 < seq.length; k++) {
+    const cur = seq[k].matches;
+    const next = seq[k + 1].matches;
+    if (!cur.length || cur.length !== next.length * 2) continue;
+
+    for (const ordering of [byId, byKick]) {
+      const C = cur.slice().sort(ordering);
+      const N = next.slice().sort(ordering);
+
+      // Validate the positional mapping against source-filled slots.
+      let confirmed = 0;
+      let ok = true;
+      for (let i = 0; i < N.length; i++) {
+        const n = N[i];
+        if (!n.home.name || !n.away.name) continue;
+        const w1 = winnerTeam(C[2 * i]);
+        const w2 = winnerTeam(C[2 * i + 1]);
+        if (!w1 || !w2) continue;
+        const names = new Set([n.home.name, n.away.name]);
+        if (names.has(w1.name) && names.has(w2.name)) confirmed++;
+        else { ok = false; break; }
+      }
+      if (!ok || confirmed < 2) continue;
+
+      // Mapping proven for this dataset — fill the gaps.
+      for (let i = 0; i < N.length; i++) {
+        const n = N[i];
+        const w1 = winnerTeam(C[2 * i]);
+        const w2 = winnerTeam(C[2 * i + 1]);
+        if (!n.home.name && !n.away.name) {
+          if (w1) { n.home = { ...w1 }; n.provisional = true; }
+          if (w2) { n.away = { ...w2 }; n.provisional = true; }
+        } else if (n.home.name && !n.away.name) {
+          const w = w1 && n.home.name === w1.name ? w2 : w2 && n.home.name === w2.name ? w1 : null;
+          if (w) { n.away = { ...w }; n.provisional = true; }
+        } else if (!n.home.name && n.away.name) {
+          const w = w1 && n.away.name === w1.name ? w2 : w2 && n.away.name === w2.name ? w1 : null;
+          if (w) { n.home = { ...w }; n.provisional = true; }
+        }
+      }
+      break; // this ordering validated — don't try the next one
+    }
+  }
 }
 
 // Fetch the real minute for live matches from the per-match endpoint (capped
@@ -474,6 +546,7 @@ export function normalize(events, leagueId) {
   const knockout = [...koMap.values()]
     .sort((a, b) => a.order - b.order)
     .map((r) => ({ stage: r.stage, ar: r.ar, matches: r.matches.sort(byKickoff) }));
+  propagateWinners(knockout);
 
   return {
     updated: Date.now(),

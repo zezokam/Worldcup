@@ -375,7 +375,9 @@ function matchCard(m, i, opts = {}) {
   const stg = opts.stage && m.stageAr ? `<span class="stg">${esc(m.stageAr)}</span>` : "";
   let st;
   if (m.state === "live") st = `<span class="st live">${esc(liveMinute(m))}</span>`;
-  else if (m.state === "finished") st = `<span class="st done">${esc(m.statusLabel || "انتهت")}</span>`;
+  else if (m.state === "finished")
+    st = `<span class="st done">${esc(m.statusLabel || "انتهت")}${m.pen ? " · ترجيح " + m.pen.h + "-" + m.pen.a : ""}</span>`;
+  else if (m.provisional) st = `<span class="st prov">متوقّع</span>`;
   else st = `<span class="st soon">${esc(m.statusLabel || "لم تبدأ")}</span>`;
 
   card.appendChild(el("div", "ko-head", `<span class="ko-when">${when}${stg}</span>${st}`));
@@ -388,8 +390,15 @@ function teamRow(m, side) {
   const t = m[side] || {};
   const s = side === "home" ? m.hs : m.as;
   const o = side === "home" ? m.as : m.hs;
-  const decided = m.state === "finished" && s !== null && o !== null;
-  const cls = decided ? (s > o ? " win" : s < o ? " lose" : "") : "";
+  let cls = "";
+  if (m.state === "finished") {
+    // Official winner marker decides shootouts (equal fulltime score).
+    if (m.winner === "HOME_TEAM" || m.winner === "AWAY_TEAM") {
+      cls = (m.winner === "HOME_TEAM") === (side === "home") ? " win" : " lose";
+    } else if (s !== null && o !== null && s !== o) {
+      cls = s > o ? " win" : " lose";
+    }
+  }
   const known = !!t.name;
   const row = el("div", "ko-row" + cls);
   row.innerHTML = `
@@ -470,6 +479,31 @@ function renderStats(d) {
     <div class="stat"><b>${fin.length ? (goals / fin.length).toFixed(1) : "—"}</b><span>معدل الأهداف/مباراة</span></div>
     <div class="stat"><b>${clean}</b><span>شباك نظيفة</span></div>`;
   view.appendChild(tiles);
+
+  // Highlights derived from matches + group tables (no extra API cost).
+  const highlights = [];
+  if (fin.length) {
+    const big = fin.slice().sort((a, b) => Math.abs(b.hs - b.as) - Math.abs(a.hs - a.as))[0];
+    if (big && big.hs !== big.as)
+      highlights.push(["أكبر فوز", `${big.home.flag} ${esc(big.home.ar)} ${big.hs}–${big.as} ${esc(big.away.ar)} ${big.away.flag}`]);
+    const hi = fin.slice().sort((a, b) => (b.hs + b.as) - (a.hs + a.as))[0];
+    if (hi) highlights.push(["أعلى مباراة أهدافًا", `${hi.home.flag} ${esc(hi.home.ar)} ${hi.hs}–${hi.as} ${esc(hi.away.ar)} ${hi.away.flag}`]);
+  }
+  const allTeams = [];
+  for (const g of d.groups || []) for (const t of g.table || []) allTeams.push(t);
+  const played = allTeams.filter((t) => t.P > 0);
+  if (played.length) {
+    const atk = played.slice().sort((a, b) => b.GF - a.GF)[0];
+    highlights.push(["أفضل هجوم", `${atk.flag} ${esc(atk.ar)} — ${atk.GF} هدفًا`]);
+    const def = played.slice().sort((a, b) => a.GA - b.GA || b.P - a.P)[0];
+    highlights.push(["أفضل دفاع", `${def.flag} ${esc(def.ar)} — استقبل ${def.GA}`]);
+  }
+  if (highlights.length) {
+    view.appendChild(el("div", "section-title", "<h2>أبرز الأرقام</h2>"));
+    const hl = el("div", "hl-grid");
+    highlights.forEach(([label, html]) => hl.appendChild(el("div", "hl-card", `<span class="hl-label">${label}</span><span class="hl-val">${html}</span>`)));
+    view.appendChild(hl);
+  }
 
   const scorers = d.scorers || [];
   view.appendChild(el("div", "section-title", "<h2>هداف المونديال</h2>"));

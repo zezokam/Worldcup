@@ -121,6 +121,18 @@ main.wrap { position: relative; z-index: 1; }
 .live-row .nm span.t { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .live-row .sc { font-size: 17px; font-weight: 800; font-variant-numeric: tabular-nums; }
 
+/* ===== Highlights + provisional badge ===== */
+.hl-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
+@media (min-width: 560px) { .hl-grid { grid-template-columns: 1fr 1fr; } }
+.hl-card {
+  display: flex; flex-direction: column; gap: 4px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+  padding: 12px 14px; box-shadow: var(--shadow);
+}
+.hl-label { font-size: 11px; font-weight: 700; color: var(--gold-2); }
+.hl-val { font-size: 13.5px; font-weight: 700; line-height: 1.6; }
+.st.prov { color: #ffd98a; background: rgba(244,192,69,.14); border: 1px solid rgba(244,192,69,.35); border-radius: 999px; padding: 2px 8px; }
+
 /* ===== Player stats tables ===== */
 .table .t.player { display: flex; flex-direction: column; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .table .t.player small { color: var(--ink-mute); font-size: 10.5px; font-weight: 600; }
